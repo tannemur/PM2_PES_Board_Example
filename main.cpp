@@ -78,6 +78,8 @@ int main()
     const float kp = 0.1f;                         // define custom kp, this is the default speed controller gain for gear box 78.125:1
 
     SpeedController speedController_M2(counts_per_turn, kn, max_voltage, pwm_M2, encoder_M2); // default 78.125:1 gear box  with default contoller parameters
+    //speedController_M2.setMaxAccelerationRPS(float maxAccelerationRPS)
+    
     // SpeedController speedController_M2(counts_per_turn * k_gear, kn / k_gear, max_voltage, pwm_M2, encoder_M2); // parameters adjusted to 100:1 gear
 
     // PositionController positionController_M3(counts_per_turn, kn, max_voltage, pwm_M3, encoder_M3); // default 78.125:1 gear with default contoller parameters
