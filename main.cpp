@@ -28,7 +28,7 @@ int main()
     user_button.fall(&user_button_pressed_fcn);
 
     // while loop gets executed every main_task_period_ms milliseconds (simple aproach to repeatedly execute main)
-    const int main_task_period_ms = 5000; // define main task period time in ms e.g. 50 ms -> main task runs 20 times per second
+    const int main_task_period_ms = 500; // define main task period time in ms e.g. 50 ms -> main task runs 20 times per second
     Timer main_task_timer;              // create Timer object which we use to run the main task every main_task_period_ms
 
 
