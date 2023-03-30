@@ -28,7 +28,7 @@ int main()
     user_button.fall(&user_button_pressed_fcn);
 
     // while loop gets executed every main_task_period_ms milliseconds (simple aproach to repeatedly execute main)
-    const int main_task_period_ms = 50; // define main task period time in ms e.g. 50 ms -> main task runs 20 times per second
+    const int main_task_period_ms = 5000; // define main task period time in ms e.g. 50 ms -> main task runs 20 times per second
     Timer main_task_timer;              // create Timer object which we use to run the main task every main_task_period_ms
 
 
@@ -88,7 +88,7 @@ int main()
 
 
     main_task_timer.start();
-    
+    int test = 2;
     // this loop will run forever
     while (true) {
 
@@ -102,6 +102,24 @@ int main()
             // visual feedback that the main task is executed, setting this once would actually be enough
             additional_led = 1;
 
+            //weird stuff that i did
+            
+            //if (!servo_S2.isEnabled()) servo_S2.enable();
+
+            
+            if(test == 2){
+                enable_motors = 1;
+                if (!servo_S2.isEnabled()) servo_S2.enable();
+                speedController_M2.setDesiredSpeedRPS(0.1f);
+                servo_S2_angle += 0.1f;
+                test = 3;
+                servo_S2.disable();
+                enable_motors = 0;
+            }
+            
+            
+            //servo_S1_angle += 0.01f;
+/*
             // commanding the servos
             if (servo_S1.isEnabled() && servo_S1.isEnabled()) {
                 
@@ -118,6 +136,7 @@ int main()
             }
 
             // state machine
+            
             switch (robot_state_actual) {
 
                 case ROBOT_STATE_INIT:
@@ -189,7 +208,7 @@ int main()
                 additional_led = 0;
             }            
         }
-
+        */
         // toggling the user led
         user_led = !user_led;
 
@@ -207,10 +226,11 @@ int main()
         thread_sleep_for(main_task_period_ms - main_task_elapsed_time_ms);
     }
 }
+}
 
 void user_button_pressed_fcn()
 {
     // do_execute_main_task if the button was pressed
     do_execute_main_task = !do_execute_main_task;
     if (do_execute_main_task) do_reset_all_once = true;
-}
+} 
