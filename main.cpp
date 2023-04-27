@@ -1,5 +1,6 @@
+#include <cstdio>
 #include <mbed.h>
-
+#include<cmath>
 #include "PM2_Drivers.h"
 
 # define M_PI 3.14159265358979323846 // number pi, an example in case you need it
@@ -13,16 +14,39 @@ DebounceIn user_button(PC_13);  // create InterruptIn interface object to evalua
 void user_button_pressed_fcn(); // custom functions which get executed when user button gets pressed, definition below
 
 
+void spin(SpeedController& speedController, float grad){
+    speedController.setDesiredSpeedRPS(1.0f);
+    thread_sleep_for(1050 * grad/360);
+    speedController.setDesiredSpeedRPS(0.0f);
+    thread_sleep_for(100);
+}
 // main runs as an own thread
 int main()
 {
     // states and actual state for state machine
+    const int EXIT_STARTPOSITION = 0;
+    const int GO_TO_2TE_HUERDE = 1; //move forward, after certain time measure sensor 1 and repeat 
+    const int GRAB_HUERDE = 2; //rotate arm 120 degrees -> rotate head 20 degrees (or whatever)
+    const int HOOK = 3; //measure sensor 2, move forward/backward
+    const int DO_A_FLIP = 4; //rotate arm -120 degrees -> rotate head ... degrees -> rotate arm 40 degrees
+    const int UNHOOK = 5; //move forward, rotate arm, rotate head -> rotate head, rotate arm
+    const int GO_TO_END = 6; //move backward 
+    const int RESET = 7; //motors to 0
+
+    int robot_state_actual = 0;
+    int wrongDistanceCounter = 0;
+    int go2HuerdeCounter = 0;
+    float motor1Angle = 0.0f;
+    float motor2Angle = 0.0f;
+    float motor3Angle = 0.0f;
+    
+    /*
     const int ROBOT_STATE_INIT     = 0;
     const int ROBOT_STATE_FORWARD  = 1;
     const int ROBOT_STATE_BACKWARD = 2;
     const int ROBOT_STATE_SLEEP    = 3;
     int robot_state_actual = ROBOT_STATE_INIT;
-
+    */
 
     // attach button fall function to user button object, button has a pull-up resistor
     user_button.fall(&user_button_pressed_fcn);
@@ -36,7 +60,7 @@ int main()
     DigitalOut user_led(LED1);       // create DigitalOut object to command user led
 
     // additional led
-    DigitalOut additional_led(PB_9); // create DigitalOut object to command extra led (you need to add an aditional resistor, e.g. 220...500 Ohm)
+    DigitalOut additional_led(PB_8); // create DigitalOut object to command extra led (you need to add an aditional resistor, e.g. 220...500 Ohm)
 
 
     // mechanical button
@@ -50,18 +74,19 @@ int main()
 
 
     // Futaba Servo S3001 20mm 3kg Analog
-    Servo servo_S1(PB_2);     // create servo objects
-    Servo servo_S2(PC_8);
+    Servo servo_S1(PC_8);     // create servo objects
+    //Servo servo_S2(PC_8);
     float servo_S1_angle = 0; // servo S1 normalized input: 0...1
     float servo_S2_angle = 0;
-    
+    float m3_angle = 0;
+
     int servo_counter = 0;    // define servo counter, this is an additional variable to make the servos move
     const int loops_per_seconds = static_cast<int>(ceilf( 1.0f / (0.001f * (float)main_task_period_ms) ));
 
 
     // 78:1, 100:1, ... Metal Gearmotor 20Dx44L mm 12V CB
     DigitalOut enable_motors(PB_15); // create DigitalOut object to enable dc motors
-
+  
     FastPWM pwm_M1(PB_13); // motor M1 is used open-loop
     FastPWM pwm_M2(PA_9);  // motor M2 is closed-loop speed controlled (angle velocity)
     FastPWM pwm_M3(PA_10); // motor M3 is closed-loop position controlled (angle controlled)
@@ -72,54 +97,121 @@ int main()
 
     // create SpeedController and PositionController objects, default parametrization is for 78.125:1 gear box
     const float max_voltage = 12.0f;               // define maximum voltage of battery packs, adjust this to 6.0f V if you only use one batterypack
-    const float counts_per_turn = 20.0f * 78.125f; // define counts per turn at gearbox end: counts/turn * gearratio
-    const float kn = 180.0f / 12.0f;               // define motor constant in RPM/V
-    const float k_gear = 100.0f / 78.125f;         // define additional ratio in case you are using a dc motor with a different gear box, e.g. 100:1
-    const float kp = 0.1f;                         // define custom kp, this is the default speed controller gain for gear box 78.125:1
+    //const float counts_per_turn = 20.0f * 78.125f; // define counts per turn at gearbox end: counts/turn * gearratio
+    const float counts_per_turn = 20.0f * 100.0f;
+    const float kn = 140.0f / 12.0f;
+    //const float kn = 180.0f / 12.0f;               // define motor constant in RPM/V
+    //const float k_gear = 100.0f / 78.125f;         // define additional ratio in case you are using a dc motor with a different gear box, e.g. 100:1
+    const float k_gear = 100.0f / 100.0f;
+    //const float kp = 0.1f;                         // define custom kp, this is the default speed controller gain for gear box 78.125:1
+    const float kp = 0.6f;  
 
     SpeedController speedController_M2(counts_per_turn, kn, max_voltage, pwm_M2, encoder_M2); // default 78.125:1 gear box  with default contoller parameters
-    // SpeedController speedController_M2(counts_per_turn * k_gear, kn / k_gear, max_voltage, pwm_M2, encoder_M2); // parameters adjusted to 100:1 gear
+    //SpeedController speedController_M2(counts_per_turn * k_gear, kn / k_gear, max_voltage, pwm_M2, encoder_M2); // parameters adjusted to 100:1 gear
 
-    // PositionController positionController_M3(counts_per_turn, kn, max_voltage, pwm_M3, encoder_M3); // default 78.125:1 gear with default contoller parameters
-    PositionController positionController_M3(counts_per_turn * k_gear, kn / k_gear, max_voltage, pwm_M3, encoder_M3); // parameters adjusted to 100:1 gear, we need a different speed controller gain here
-    positionController_M3.setSpeedCntrlGain(kp * k_gear);   // adjust internal speed controller gain, this is just an example
+    PositionController positionController_M3(counts_per_turn, kn, max_voltage, pwm_M3, encoder_M3); // default 78.125:1 gear with default contoller parameters
+    //PositionController positionController_M3(counts_per_turn * k_gear, kn / k_gear, max_voltage, pwm_M3, encoder_M3); // parameters adjusted to 100:1 gear, we need a different speed controller gain here
+    //positionController_M3.setSpeedCntrlGain(kp * k_gear);   // adjust internal speed controller gain, this is just an example
     float max_speed_rps = 0.5f; // define maximum speed that the position controller is changig the speed, has to be smaller or equal to kn * max_voltage
-    positionController_M3.setMaxVelocityRPS(max_speed_rps); // adjust max velocity for internal speed controller
-
+    //positionController_M3.setMaxVelocityRPS(max_speed_rps); // adjust max velocity for internal speed controller
+    
+    
 
     main_task_timer.start();
-    int test = 2;
+    servo_S1.enable(0.0f);
+    enable_motors = 1;
+    
     // this loop will run forever
-    while (true) {
-
+    while (true) {       
         main_task_timer.reset();
 
         if (do_execute_main_task) {
 
-            // read analog input
-            ir_distance_mV = 1.0e3f * ir_analog_in.read() * 3.3f;
+            //servo_S1.setNorlalisedAngle(0.3f);
 
-            // visual feedback that the main task is executed, setting this once would actually be enough
-            additional_led = 1;
+            switch (robot_state_actual) { //switch case is not active
+                case EXIT_STARTPOSITION:
+                    //if (!servo_S1.isEnabled())servo_S1.enable(0.0f);
+                    if(servo_S1_angle < 0.9f)servo_S1_angle += 0.1f;
+                    else(robot_state_actual = GO_TO_2TE_HUERDE);                    
+                    servo_S1.setNorlalisedAngle(servo_S1_angle);
+                    thread_sleep_for(500);
+                    positionController_M3.setDesiredRotation(1.5f);                    
+                    
+                    break;    
 
-            //weird stuff that i did
-            
-            //if (!servo_S2.isEnabled()) servo_S2.enable();
+                case GO_TO_2TE_HUERDE:
+                    
+                    if (go2HuerdeCounter < 5){//just move a lot
+                        spin(speedController_M2, 360.0f);                   
+                        go2HuerdeCounter++;
+                    }/* -> skipping sensors for now
+                    else if (ir_distance_mV <= 40){
+                        wrongDistanceCounter++;
+                        spin(speedController_M2, 360.0f);                    
+                    } */
+                    else{
+                        //wrongDistanceCounter = 1;
+                        robot_state_actual = GRAB_HUERDE;
+                    } /* -> skipping sensors for now
+                    if (wrongDistanceCounter > 10) robot_state_actual = RESET; */
+                    break;
 
+                case GRAB_HUERDE:
+                    if(servo_S1_angle > 0.6f)servo_S1_angle -= 0.1f;
+                    else(robot_state_actual = DO_A_FLIP);                    
+                    servo_S1.setNorlalisedAngle(servo_S1_angle);                    
+                    //spin(speedController_M3, 360.0f);
+                    thread_sleep_for(500);
+                    positionController_M3.setDesiredRotation(0.0f);
+                    break;
+                    
+                case HOOK: //skipped
+                    if(true){
+                        spin(speedController_M2, 1.0f * wrongDistanceCounter * pow(wrongDistanceCounter, -1));                   
+                        wrongDistanceCounter++;
+                    }
+                    else robot_state_actual = DO_A_FLIP;
+                    break;
+                    
+                case DO_A_FLIP:
+                    servo_S1.setNorlalisedAngle(0.3f);
+                    thread_sleep_for(500);
+                    positionController_M3.setDesiredRotation(1.5f); 
+                    thread_sleep_for(500);
+                    spin(speedController_M2, 360.0f);
+                    robot_state_actual = GO_TO_END;
+                    break;
+
+                case UNHOOK://skipped
+                    for(int i = 0; i < 10; i++){
+                        spin(speedController_M2, 360.0f);
+                        //spin(speedController_M3, 360.0f);
+                        //spin(speedController_M2, 360.0f);
+                    }
+                    robot_state_actual = GO_TO_END;
+                    break;
+
+                case GO_TO_END:
+                    for(int i = 0; i <3; i++){
+                        spin(speedController_M2, 360.0f);
+                       
+                    }
+                    robot_state_actual = RESET;
+                    break;
+                    
+                case RESET:
+                    //spin(speedController_M3, -motor3Angle);
+                    servo_S1.setNorlalisedAngle(0.0f);
+                    thread_sleep_for(500);
+                    positionController_M3.setDesiredRotation(0.0f);
+                    break;
+                default:
+                    //do nothing
+                    break;
+            } 
             
-            if(test == 2){
-                enable_motors = 1;
-                if (!servo_S2.isEnabled()) servo_S2.enable();
-                speedController_M2.setDesiredSpeedRPS(0.1f);
-                servo_S2_angle += 0.1f;
-                test = 3;
-                servo_S2.disable();
-                enable_motors = 0;
-            }
-            
-            
-            //servo_S1_angle += 0.01f;
-/*
+            /*    
             // commanding the servos
             if (servo_S1.isEnabled() && servo_S1.isEnabled()) {
                 
@@ -209,21 +301,43 @@ int main()
             }            
         }
         */
+        if (do_reset_all_once) {
+            do_reset_all_once = false;
+
+            ir_distance_mV = 0.0f;
+
+            pwm_M1.write(0.5f);
+            
+            speedController_M2.setDesiredSpeedRPS(0.0f);
+            positionController_M3.setDesiredRotation(0.0f);
+            robot_state_actual = 0; //EXIT_STARTPOSITION
+            go2HuerdeCounter = 0;
+            servo_S1.setNorlalisedAngle(0.0f);
+
+            servo_S1_angle = 0;
+            thread_sleep_for(500);
+            //servo_S1.disable();
+           
+            additional_led = 0;
+        }
         // toggling the user led
-        user_led = !user_led;
+        if (servo_S1.isEnabled()){
+            user_led = !user_led;
+            }
 
         // do only output via serial what's really necessary, this makes your code slow
-        printf("IR sensor (mV): %3.3f, Encoder M1: %3d, Speed M2 (rps) %3.3f, Position M3 (rot): %3.3f, Servo S1 angle (normalized): %3.3f, Servo S2 angle (normalized): %3.3f\r\n",
+        /*printf("IR sensor (mV): %3.3f, Encoder M1: %3d, Speed M2 (rps) %3.3f, Position M3 (rot): %3.3f, Servo S1 angle (normalized): %3.3f, Servo S2 angle (normalized): %3.3f\r\n",
                ir_distance_mV,
                encoder_M1.read(),
                speedController_M2.getSpeedRPS(),
                positionController_M3.getRotation(),
                servo_S1_angle,
                servo_S2_angle);
-
+        */
         // read timer and make the main thread sleep for the remaining time span (non blocking)
-        int main_task_elapsed_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(main_task_timer.elapsed_time()).count();
-        thread_sleep_for(main_task_period_ms - main_task_elapsed_time_ms);
+        //int main_task_elapsed_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(main_task_timer.elapsed_time()).count();
+        //thread_sleep_for(main_task_period_ms - main_task_elapsed_time_ms);
+        thread_sleep_for(50);
     }
 }
 }
@@ -232,5 +346,5 @@ void user_button_pressed_fcn()
 {
     // do_execute_main_task if the button was pressed
     do_execute_main_task = !do_execute_main_task;
-    if (do_execute_main_task) do_reset_all_once = true;
+    do_reset_all_once = true;
 } 
